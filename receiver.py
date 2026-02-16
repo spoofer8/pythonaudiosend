@@ -78,9 +78,8 @@ def main() -> None:
     sock.bind(("0.0.0.0", args.port))
     sock.settimeout(1.0)
 
-    print(f"Listening for audio on port {args.port}")
-    print(f"  Channels: {args.channels} | Rate: {args.rate} Hz | Chunk: {CHUNK}")
-    print("Press Ctrl+C to stop.\n")
+    print(f"Waiting for sender on port {args.port}...")
+    print(f"  Channels: {args.channels} | Rate: {args.rate} Hz | Chunk: {CHUNK}\n")
 
     running = True
 
@@ -91,10 +90,35 @@ def main() -> None:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
+    # Wait for handshake from sender
+    sender_addr = None
+    while running:
+        try:
+            data, addr = sock.recvfrom(BUFFER_SIZE)
+            if data == b"CONNECT":
+                sock.sendto(b"ACCEPT", addr)
+                sender_addr = addr
+                print(f"--- Connected successfully to sender at {addr[0]}:{addr[1]} ---")
+                print("  Receiving audio now. Press Ctrl+C to stop.\n")
+                break
+        except socket.timeout:
+            continue
+
+    if not running or sender_addr is None:
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        sock.close()
+        return
+
     try:
         while running:
             try:
                 data, addr = sock.recvfrom(BUFFER_SIZE)
+                if data == b"CONNECT":
+                    # Handle duplicate handshakes (sender retrying)
+                    sock.sendto(b"ACCEPT", addr)
+                    continue
                 stream.write(data)
             except socket.timeout:
                 continue

@@ -74,10 +74,35 @@ def main() -> None:
         p.terminate()
         sys.exit(1)
 
-    print(f"Streaming audio to {args.host}:{args.port}")
-    print(f"  Channels: {args.channels} | Rate: {args.rate} Hz | Chunk: {CHUNK}")
-    print("Press Ctrl+C to stop.\n")
+    print(f"Connecting to receiver at {args.host}:{args.port}...")
 
+    # Handshake: send CONNECT and wait for ACCEPT
+    sock.settimeout(2.0)
+    connected = False
+    for attempt in range(1, 6):
+        try:
+            sock.sendto(b"CONNECT", (args.host, args.port))
+            reply, _ = sock.recvfrom(64)
+            if reply == b"ACCEPT":
+                connected = True
+                break
+        except socket.timeout:
+            print(f"  Attempt {attempt}/5 - no response, retrying...")
+
+    if not connected:
+        print("Failed to connect: receiver did not respond.")
+        print("Make sure receiver.py is running and the IP/port are correct.")
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        sock.close()
+        sys.exit(1)
+
+    print(f"\n--- Connected successfully to {args.host}:{args.port} ---")
+    print(f"  Channels: {args.channels} | Rate: {args.rate} Hz | Chunk: {CHUNK}")
+    print("  Streaming audio now. Press Ctrl+C to stop.\n")
+
+    sock.settimeout(None)
     running = True
 
     def handle_signal(sig, frame):
