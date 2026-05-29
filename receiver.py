@@ -3,11 +3,12 @@
 Audio Receiver - Receives audio streamed over LAN via UDP and plays it back.
 
 Usage:
-    python receiver.py [--port PORT] [--device DEVICE_INDEX]
+    python receiver.py [--port PORT] [--device DEVICE]
 
 Example:
     python receiver.py
     python receiver.py --port 5000 --device 3
+    python receiver.py --device "Speakers"
 """
 
 import argparse
@@ -38,11 +39,36 @@ def list_devices(p: pyaudio.PyAudio) -> None:
     print()
 
 
+def resolve_device(p: pyaudio.PyAudio, value: str):
+    """Resolve --device value to (index, info). Accepts numeric index or name substring.
+
+    For names: case-insensitive substring match against output devices; first match wins.
+    Returns (None, None) if not found.
+    """
+    if value.lstrip("-").isdigit():
+        idx = int(value)
+        try:
+            info = p.get_device_info_by_index(idx)
+        except OSError:
+            return None, None
+        return idx, info
+
+    needle = value.casefold()
+    for i in range(p.get_device_count()):
+        info = p.get_device_info_by_index(i)
+        if info["maxOutputChannels"] > 0 and needle in str(info["name"]).casefold():
+            return i, info
+    return None, None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Receive and play audio streamed over LAN")
     parser.add_argument("--port", type=int, default=4000, help="UDP port to listen on (default: 4000)")
     parser.add_argument(
-        "--device", type=int, default=None, help="Audio output device index (use --list to see devices)"
+        "--device",
+        type=str,
+        default=None,
+        help="Audio output device index or name substring (use --list to see devices)",
     )
     parser.add_argument("--channels", type=int, default=CHANNELS, help="Number of audio channels (default: 1)")
     parser.add_argument("--rate", type=int, default=RATE, help="Sample rate in Hz (default: 44100)")
@@ -56,6 +82,27 @@ def main() -> None:
         p.terminate()
         sys.exit(0)
 
+    device_index = None
+    device_info = None
+    if args.device is not None:
+        device_index, device_info = resolve_device(p, args.device)
+        if device_index is None:
+            print(f"Error: no output device matching '{args.device}'.")
+            print("Use --list to see available devices.")
+            p.terminate()
+            sys.exit(1)
+    else:
+        try:
+            device_info = p.get_default_output_device_info()
+            device_index = int(device_info["index"])
+        except OSError:
+            device_info = None
+
+    if device_info is not None:
+        print(f"Selected output device: [{device_index}] {device_info['name']}")
+    else:
+        print("Selected output device: (system default)")
+
     stream_kwargs = {
         "format": FORMAT,
         "channels": args.channels,
@@ -63,8 +110,8 @@ def main() -> None:
         "output": True,
         "frames_per_buffer": CHUNK,
     }
-    if args.device is not None:
-        stream_kwargs["output_device_index"] = args.device
+    if device_index is not None:
+        stream_kwargs["output_device_index"] = device_index
 
     try:
         stream = p.open(**stream_kwargs)
